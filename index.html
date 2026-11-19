@@ -16,7 +16,9 @@
 </head>
 <body>
   <div id="app"><div class="boot"><div class="boot-logo">&gt;_</div><p>Загружаем LinuxLab…</p></div></div>
+  <div class="visually-hidden" id="announcement" role="status" aria-atomic="true"></div>
+  <div class="pwa-update" id="pwa-update" role="status" hidden>Обновление готово. Чтобы применить его, закройте все вкладки LinuxLab и откройте приложение снова.</div>
   <script src="./content.js"></script>
-  <script src="./app.js"></script>
+  <script type="module" src="./app.js"></script>
 </body>
 </html>

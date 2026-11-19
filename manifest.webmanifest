@@ -3,6 +3,7 @@
   "short_name": "LinuxLab",
   "description": "Учись диагностике Ubuntu, набирая команды вручную. Работает офлайн.",
   "lang": "ru",
+  "id": "./",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
