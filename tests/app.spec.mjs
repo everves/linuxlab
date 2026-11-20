@@ -161,8 +161,8 @@ test('reading library keeps old completions and tracks cases of the same command
   await context.setOffline(true);
   await page.reload();
   const counter = page.locator('.lab-count');
-  const topic = page.getByLabel('Тема', { exact: true });
-  const picker = page.getByLabel('Пример', { exact: true });
+  const topic = page.getByRole('combobox', { name: 'Тема', exact: true });
+  const picker = page.getByRole('combobox', { name: 'Пример', exact: true });
   await expect(counter).toHaveText('Разобрано 5/200');
   await expect(picker.locator('option')).toHaveCount(200);
   await topic.selectOption('docker');

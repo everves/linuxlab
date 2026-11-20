@@ -474,31 +474,31 @@ export const readingGroups = [
     question: "Как трактовать состояние unit-файла?",
     cases: [
       {
-        key: "boot", title: "Политика узла A",
+        key: "boot", title: "Узел после настройки",
         output: "enabled",
         conclusion: "Установлены постоянные связи включения юнита",
         evidence: "enabled означает, что юнит включён через связи установки. Текущая активность проверяется отдельно.",
       },
       {
-        key: "disabled", title: "Политика узла B",
+        key: "disabled", title: "Резервный веб-сервер",
         output: "disabled",
         conclusion: "Юнит доступен для включения, но сейчас выключен в настройках установки",
         evidence: "disabled относится к включению юнита, зависимость всё ещё может запросить его запуск.",
       },
       {
-        key: "masked", title: "Политика узла C",
+        key: "masked", title: "Узел на обслуживании",
         output: "masked",
         conclusion: "Запуск юнита заблокирован маской",
         evidence: "Для masked файл юнита замаскирован, обычно ссылкой на /dev/null.",
       },
       {
-        key: "runtime", title: "Политика узла D",
+        key: "runtime", title: "Тест до перезагрузки",
         output: "enabled-runtime",
         conclusion: "Включение настроено только до перезагрузки",
         evidence: "Суффикс -runtime указывает на временные связи в /run.",
       },
       {
-        key: "static", title: "Политика узла E",
+        key: "static", title: "Юнит по зависимости",
         output: "static",
         conclusion: "У юнита отсутствуют обычные инструкции для enable",
         evidence: "static характерно для юнита без инструкций установки, который может запускаться по зависимости.",
@@ -906,31 +906,31 @@ export const readingGroups = [
     question: "Какое состояние пакета показывает комбинация в начале строки?",
     cases: [
       {
-        key: "installed", title: "Проверка узла A",
+        key: "installed", title: "Инвентаризация пакетов",
         output: "ii  nginx  1.24.0-2  amd64  small, powerful web server",
         conclusion: "Пакет установлен и настроен, желаемое действие — install",
         evidence: "Первый i означает желаемую установку, второй i — установленное состояние.",
       },
       {
-        key: "config", title: "Проверка узла B",
+        key: "config", title: "После удаления пакета",
         output: "rc  nginx  1.24.0-2  amd64  small, powerful web server",
         conclusion: "Пакет удалён, но сведения о конфигурационных файлах остались",
         evidence: "В коде rc буква c означает состояние config-files.",
       },
       {
-        key: "unpacked", title: "Проверка узла C",
+        key: "unpacked", title: "Прерванная установка",
         output: "iU  nginx  1.24.0-2  amd64  small, powerful web server",
         conclusion: "Пакет распакован и ожидает настройки",
         evidence: "Заглавная U во второй позиции означает Unpacked.",
       },
       {
-        key: "half", title: "Проверка узла D",
+        key: "half", title: "Ошибка настройки пакета",
         output: "iF  nginx  1.24.0-2  amd64  small, powerful web server",
         conclusion: "Пакет находится в частично настроенном состоянии",
         evidence: "Во второй позиции F означает Half-configured.",
       },
       {
-        key: "hold", title: "Проверка узла E",
+        key: "hold", title: "Перед обновлением системы",
         output: "hi  nginx  1.24.0-2  amd64  small, powerful web server",
         conclusion: "Пакет установлен и помечен для удержания версии",
         evidence: "Начальная h обозначает hold, следующая i — текущее установленное состояние.",
