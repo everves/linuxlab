@@ -1,5 +1,7 @@
-// Small static terminal snapshots, each paired with an existing typing exercise.
-export const readings = [
+import { readingGroups } from './reading-cases.js';
+
+// These five original IDs are also keys in previously exported progress files.
+const originals = [
   {
     drill: 'storage-01', title: 'Свободное место', command: 'df -h',
     output: 'Filesystem   Size  Used Avail Use% Mounted on\n/dev/vda1     40G   16G   24G  40% /\n/dev/vdb1     20G   20G     0 100% /var',
@@ -50,4 +52,25 @@ export const readings = [
       ['Учётные записи с правами администратора', 'wc не анализирует поля записей и привилегии пользователей.'],
     ], correct: 1,
   },
+];
+
+function expandGroup({ drill, command, question, cases }, groupIndex) {
+  return cases.map((item, index) => {
+    // Use alternative outcomes of this command as distractors. Keep order stable on retry.
+    const choices = [cases[(index + 1) % cases.length], cases[(index + 3) % cases.length]];
+    const correct = (index + groupIndex) % 3;
+    choices.splice(correct, 0, item);
+    return {
+      id: `${drill}-${item.key}`, drill, command, question, title: item.title, output: item.output, correct,
+      options: choices.map(choice => [
+        choice.conclusion,
+        choice === item ? item.evidence : `Сравни со случаем, когда этот ответ подходит. ${choice.evidence}`,
+      ]),
+    };
+  });
+}
+
+export const readings = [
+  ...originals.map(item => ({ ...item, id: item.drill })),
+  ...readingGroups.flatMap(expandGroup),
 ];

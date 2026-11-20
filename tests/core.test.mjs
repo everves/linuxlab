@@ -154,11 +154,19 @@ test('assistance restarts spacing and only scheduled independent recall clears a
 });
 
 test('each output exercise links to an accepted command and progress round trips with old backups', () => {
-  assert.equal(new Set(readings.map(item => item.drill)).size, readings.length);
+  assert.equal(readings.length, 200);
+  assert.equal(new Set(readings.map(item => item.id)).size, readings.length);
+  assert.equal(new Set(readings.map(item => item.command + '\n' + item.output)).size, readings.length);
+  for (const id of ['storage-01', 'processes-04', 'systemd-04', 'storage-02', 'reading-07']) {
+    assert.ok(readings.some(item => item.id === id && item.drill === id));
+  }
   for (const item of readings) {
     const drill = data.drills.find(d => d.id === item.drill);
     assert.ok(checkAnswer(item.command, drill.answers).correct, item.drill);
-    assert.ok(item.options[item.correct]);
+    assert.match(item.id, /^[a-z0-9]+(?:-[a-z0-9]+)+$/);
+    assert.equal(item.options.length, 3);
+    assert.equal(new Set(item.options.map(([text]) => text)).size, 3);
+    assert.ok(Number.isInteger(item.correct) && item.options[item.correct]);
     assert.ok(item.options.every(([choice, why]) => choice && why));
   }
   const backup = { ...newProgress(), readings: { 'storage-01': 12345 } };
