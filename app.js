@@ -2,6 +2,8 @@
 import { checkAnswer, checkIncidentCommand } from './answers.js';
 import { DAILY_GOALS, PROGRESS_KEY, loadProgress, newProgress, parseProgress } from './progress.js';
 import { readRoute, routePath } from './routes.js';
+import { needsPractice, planPractice, recordAnswer } from './learning.js';
+import { readings } from './readings.js';
 import { registerOffline } from './pwa.js';
 
 (() => {
@@ -48,7 +50,6 @@ const I = {
 const icon = (k, n=18) => `<svg aria-hidden="true" width="${n}" height="${n}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round">${I[k]||I.terminal}</svg>`;
 const h = v => String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const today = () => { const d=new Date(); return [d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-'); };
-const datePlus = days => Date.now()+days*86400000;
 let progress = loadProgress(() => localStorage);
 function save(next = progress) {
   try {
@@ -59,7 +60,7 @@ function save(next = progress) {
     return false;
   }
 }
-const studied = id => !!progress.drills[id]?.seen;
+const studied = id => !!progress.drills[id]?.correct;
 const due = d => d?.seen && (d.due||0)<=Date.now();
 const completed = id => !!progress.incidents[id]?.done;
 const knowledge = ()=>DATA.drills.filter(x=>studied(x.id)).length;
@@ -71,12 +72,18 @@ const dateDone = day=>progress.daily[day]?.drills||0;
 const goal=()=>progress.settings.dailyGoal;
 function getStreak(){let days=0;const d=new Date(); if(!dateDone(today()))d.setDate(d.getDate()-1); for(let i=0;i<400;i++){const k=[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');if(!dateDone(k))break;days++;d.setDate(d.getDate()-1);}return days;}
 function logActivity(kind){const day=today();const row=progress.daily[day]||(progress.daily[day]={drills:0,incidents:0});row[kind]=(row[kind]||0)+1;}
-function markDrill(ex,correct,perfect=false,revealed=false,exam=false,hadMiss=false){
- const prev=progress.drills[ex.id]||{seen:0,correct:0,fails:0,streak:0,interval:0,due:0};
- prev.seen++; prev.last=Date.now();
- if(correct){prev.correct++;if(hadMiss)prev.fails++;prev.streak=(prev.streak||0)+(perfect?1:0);prev.interval=perfect?([1,3,7,14,30,60][Math.min(prev.streak-1,5)]):1;prev.due=datePlus(prev.interval);}
- else{prev.fails++;prev.streak=0;prev.interval=0;prev.due=Date.now();}
- progress.drills[ex.id]=prev;logActivity('drills');const reward=correct?(revealed?1:perfect?(exam?15:10):5):0;progress.xp+=reward;save();return reward;
+function markDrill(ex, correct, perfect = false, revealed = false, exam = false, hadMiss = false) {
+  const row = recordAnswer(progress.drills[ex.id], { correct, independent: perfect, hadMiss });
+  const earnsCredit = correct && row.lastCreditDay !== today();
+  if (earnsCredit) {
+    row.lastCreditDay = today();
+    logActivity('drills');
+  }
+  progress.drills[ex.id] = row;
+  const reward = earnsCredit ? (revealed ? 1 : perfect ? (exam ? 15 : 10) : 5) : 0;
+  progress.xp += reward;
+  save();
+  return reward;
 }
 function shuffle(items) {
   const result = [...items];
@@ -137,10 +144,57 @@ function stats(){return `<div class="stats-grid">
 function stat(title,note,sub,ic){return `<div class="stat"><span class="stat-icon">${icon(ic,17)}</span><div class="stat-title">${h(title)}</div><div class="stat-number">${h(note)}</div><div class="stat-sub">${h(sub)}</div></div>`;}
 function cardModule(m){const n=countByModule(m),per=Math.round(100*n/m.drills.length);return `<article class="module-card"><div class="card-top"><span class="glyph ${m.level===1?'green':m.level===4?'purple':''}">${icon(m.icon)}</span><span class="tiny-badge">${h(badges[m.level])}</span></div><div><h3>${h(m.title)}</h3></div><p class="card-desc">${h(m.desc)}</p><div class="progress-track"><div class="progress-fill" style="width:${per}%"></div></div><div class="card-bottom"><span>${n}/${m.drills.length} упражнений</span><a class="text-link" href="${routePath('module', m.id)}">${n?'Продолжить':'Изучить'} ${icon('arrow',13)}</a></div></article>`;}
 function cardIncident(s){const done=completed(s.id);return `<article class="incident-card"><div class="card-top"><span class="glyph ${s.level===1?'green':s.level===3?'orange':''}">${icon(s.icon)}</span><span class="tiny-badge ${done?'good':''}">${done?'Пройден':h(badges[s.level])}</span></div><h3>${h(s.title)}</h3><p class="card-desc">${h(s.summary)}</p><div class="card-bottom"><span>${s.steps.length} диагностических шага</span><a class="text-link" href="${routePath('incident', s.id)}">${done?'Пройти ещё':'Разобрать'} ${icon('arrow',13)}</a></div></article>`;}
-function activityGraph(){const days=[];for(let i=6;i>=0;i--){const d=new Date();d.setDate(d.getDate()-i);const k=[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');days.push({key:k,label:['вс','пн','вт','ср','чт','пт','сб'][d.getDay()],count:dateDone(k),current:i===0});}const max=Math.max(goal(),...days.map(d=>d.count));return `<div class="daily-bars">${days.map(d=>`<div class="daily-bar-column ${d.current?'active':''}" title="${h(d.key)}: ${d.count} упражнений"><b style="height:${Math.max(3,Math.round((d.count/max)*80))}px;${!d.count?'background:#26394a':''}"></b><span>${d.label}</span></div>`).join('')}</div><div class="small-note">Сегодня ${dateDone(today())} из ${goal()} упражнений до дневной цели</div><div class="progress-track" style="margin-top:10px"><div class="progress-fill" style="width:${Math.min(100,Math.round(dateDone(today())/goal()*100))}%"></div></div>`;}
-function dashboard(){return `<div class="hero"><div class="hero-copy"><div class="eyebrow">ТВОЯ ЛАБОРАТОРИЯ LINUX</div><h1>Меньше подсказок.<br><em>Больше уверенности.</em></h1><p>Учи команды Ubuntu руками. Диагностируй сбои как на реальной смене. Возвращайся к тому, что забывается.</p><div class="hero-actions"><button class="btn btn-primary btn-lg" data-action="quick-start">${icon('terminal')} Начать тренировку</button><a class="btn btn-ghost btn-lg" href="#/incidents">${icon('pulse')} Инциденты</a></div></div></div>
+function activityGraph(){const days=[];for(let i=6;i>=0;i--){const d=new Date();d.setDate(d.getDate()-i);const k=[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');days.push({key:k,label:['вс','пн','вт','ср','чт','пт','сб'][d.getDay()],count:dateDone(k),current:i===0});}const max=Math.max(goal(),...days.map(d=>d.count));return `<div class="daily-bars">${days.map(d=>`<div class="daily-bar-column ${d.current?'active':''}" title="${h(d.key)}: ${d.count} упражнений"><b style="height:${Math.max(3,Math.round((d.count/max)*80))}px;${!d.count?'background:#26394a':''}"></b><span>${d.label}</span></div>`).join('')}</div><div class="small-note">Сегодня выполнено ${dateDone(today())} из ${goal()} упражнений</div><div class="progress-track" style="margin-top:10px"><div class="progress-fill" style="width:${Math.min(100,Math.round(dateDone(today())/goal()*100))}%"></div></div>`;}
+function dailyPlan() {
+  const remaining = goal() - dateDone(today());
+  return planPractice(DATA.drills, progress.drills, remaining > 0 ? Math.min(5, remaining) : 5);
+}
+
+let readingIndex;
+let readingChoice = null;
+function readingLab() {
+  if (readingIndex === undefined) {
+    readingIndex = Math.max(0, readings.findIndex(item => !progress.readings?.[item.drill]));
+  }
+  const item = readings[readingIndex];
+  const answered = readingChoice !== null;
+  const correct = readingChoice === item.correct;
+  const solved = readings.filter(r => progress.readings?.[r.drill]).length;
+  const response = answered ? item.options[readingChoice][1] : '';
+  return `<section class="reading-lab" aria-labelledby="reading-title">
+    <div class="lab-heading"><div><div class="eyebrow">Чтение вывода</div><h2 id="reading-title">${h(item.title)}</h2></div>
+      <span class="lab-count">Разобрано ${solved}/${readings.length}</span></div>
+    <div class="lab-grid"><div class="sample-terminal"><div class="terminal-caption">${icon('terminal', 15)} Учебный терминал</div>
+      <code><span aria-hidden="true">$ </span>${h(item.command)}</code>
+      <pre tabindex="0" aria-label="Пример вывода команды">${h(item.output)}</pre></div>
+    <div class="reading-choices"><h3>${h(item.question)}</h3>
+      ${item.options.map(([label], index) => `<button class="reading-option ${index === readingChoice ? (correct ? 'right' : 'wrong') : ''}" data-action="reading-answer" data-index="${index}" ${correct ? 'disabled' : ''}>${h(label)}${index === readingChoice ? icon(correct ? 'check' : 'info', 16) : ''}</button>`).join('')}
+      ${answered ? `<div class="reading-feedback ${correct ? 'right' : ''}"><strong>${correct ? 'Верно.' : 'Посмотри ещё раз.'}</strong> ${h(response)}</div>` : ''}
+    </div></div>
+    <div class="lab-footer"><span>Пример ${readingIndex + 1} из ${readings.length}</span><div class="actions">
+      ${correct ? `<button class="btn btn-soft" data-action="start" data-mode="single" data-id="${item.drill}">Набрать команду</button>` : ''}
+      <button class="btn btn-ghost" data-action="reading-next">Другой пример ${icon('arrow', 14)}</button></div></div>
+    </section>`;
+}
+
+function dashboard() {
+  const plan = dailyPlan();
+  const first = DATA.drills.find(d => d.id === plan[0].id);
+  const remaining = Math.max(0, goal() - dateDone(today()));
+  return `<section class="plan-hero">
+    <div><div class="eyebrow">${remaining ? 'План на сегодня' : 'Дневная цель достигнута'}</div>
+      <h1>${remaining ? 'Твоя тренировка' : 'Ещё немного практики'}</h1>
+      <p>${dueCount() ? 'Начни с команд, которые пора вспомнить.' : knowledge() ? 'Продолжай с ближайшего задания своего уровня.' : 'Начни с базовых команд Ubuntu.'} Заданий в подборке — ${plan.length}.</p>
+      <button class="btn btn-primary btn-lg" data-action="quick-start">${icon('terminal')} Начать тренировку</button>
+    </div>
+    <div class="plan-preview"><div class="plan-preview-label">${icon('target', 17)} Первое задание</div>
+      <strong>${h(first.prompt)}</strong><span>${h(plan[0].reason)} · ${h(badges[first.level])}</span>
+      <div class="goal-line"><span>Цель на день</span><b>${dateDone(today())} / ${goal()}</b></div>
+      <progress aria-label="Цель на день" value="${Math.min(goal(), dateDone(today()))}" max="${goal()}"></progress>
+    </div></section>
+ ${readingLab()}
  ${stats()}
- <div class="cards-2"><div class="surface"><div class="section-title" style="margin:0"><h2>Ритм обучения</h2><span class="tiny-badge">7 ДНЕЙ</span></div>${activityGraph()}</div><div class="surface"><div class="section-title" style="margin:0"><h2>Сегодня в фокусе</h2>${icon('target',18)}</div><p class="sidebar-tip">${dueCount()?`У тебя ${dueCount()} команд на повторение. Начни с них — это эффективнее, чем только проходить новые темы.`:'Повторений на сегодня нет. Возьми новые команды или потренируйся в аварийных ситуациях.'}</p><div class="actions" style="margin-top:20px"><button class="btn btn-primary" data-action="start" data-mode="${dueCount()?'review':'mixed'}">${icon(dueCount()?'refresh':'bolt')} ${dueCount()?'Повторить':'Смешанная практика'}</button><a class="btn btn-soft" href="#/courses">Темы ${icon('arrow',14)}</a></div></div></div>
+ <div class="surface"><div class="section-title" style="margin:0"><h2>Ритм обучения</h2><span class="tiny-badge">7 ДНЕЙ</span></div>${activityGraph()}</div>
  <div class="section-title"><h2>Учебные направления</h2><a class="text-link" href="#/courses">Все ${DATA.modules.length} модулей ${icon('arrow',14)}</a></div>
  <div class="cards-3">${DATA.modules.slice(0,6).map(cardModule).join('')}</div>
  <div class="section-title"><h2>Разбор инцидентов</h2><a class="text-link" href="#/incidents">Все сценарии ${icon('arrow',14)}</a></div>
@@ -149,14 +203,21 @@ function dashboard(){return `<div class="hero"><div class="hero-copy"><div class
 function foot(){return `<div class="footer-note">LinuxLab • учебная симуляция • команды на реальных серверах не выполняются • прогресс хранится на этом устройстве</div>`;}
 function courseList(){const arr=DATA.modules.filter(m=>view.courseFilter===0||m.level===view.courseFilter);return `<div class="page-head"><div><div class="eyebrow">КАТАЛОГ ЗНАНИЙ</div><h1 class="page-title">Учебные модули</h1><p class="page-sub">${DATA.modules.length} направлений, ${DATA.drills.length} практических заданий. Изучи логику команд — затем набери их самостоятельно, не выбирая готовый ответ.</p></div></div><div class="section-top">${[0,1,2,3,4].map(l=>`<button class="filter ${view.courseFilter===l?'active':''}" data-action="course-filter" data-level="${l}" aria-pressed="${view.courseFilter===l}">${l===0?'Все':badges[l]}</button>`).join('')}</div><div class="module-grid">${arr.map(cardModule).join('')}</div>${foot()}`;}
 function moduleDetail(){const m=DATA.modules.find(x=>x.id===view.module);if(!m)return courseList();const done=countByModule(m);return `<a class="text-link" href="#/courses">${icon('back',15)} Все модули</a><div class="page-head" style="margin-top:12px"><div><div class="eyebrow">${h(m.tag)} • ${h(badges[m.level])}</div><h1 class="page-title">${h(m.title)}</h1><p class="page-sub">${h(m.desc)}</p></div><div class="page-head-right"><button class="btn btn-primary" data-action="start" data-mode="module" data-id="${m.id}">${icon('terminal')} Практика (${m.drills.length})</button></div></div><div class="h-stack"><div class="flex-1">${m.lessons.map((lesson,i)=>`<article class="lesson"><span class="eyebrow">РАЗДЕЛ ${i+1} / ${m.lessons.length}</span><h3>${h(lesson[0])}</h3><p>${h(lesson[1])}</p><div class="code-block">${h(lesson[2])}</div></article>`).join('')}<div class="surface"><div class="section-title" style="margin:0 0 12px"><h2>Задания для закрепления</h2><span class="tiny-badge">${done}/${m.drills.length}</span></div>${m.drills.map((d,i)=>`<div class="topic-row"><div class="stepnum ${studied(d.id)?'passed':''}">${studied(d.id)?icon('check',15):i+1}</div><div><strong>${h(d.prompt)}</strong><small>${studied(d.id)?(due(progress.drills[d.id])?'Пора повторить':'Пройдено'):'Ещё не изучено'}</small></div></div>`).join('')}<div class="actions" style="margin-top:20px"><button class="btn btn-primary" data-action="start" data-mode="module" data-id="${m.id}">Запустить задания ${icon('arrow')}</button></div></div></div><aside class="aside-panel"><div class="surface"><div class="eyebrow">ПРОГРЕСС МОДУЛЯ</div><div class="summary-score" style="font-size:34px;margin:10px 0">${Math.round(100*done/m.drills.length)}%</div><div class="progress-track"><div class="progress-fill" style="width:${Math.round(100*done/m.drills.length)}%"></div></div><p class="sidebar-tip">Каждую команду нужно набрать самостоятельно. Ошибка не блокирует обучение — команда вернётся в повторение.</p></div><div class="surface"><div class="eyebrow">КАК УЧИТЬ</div><div class="learning-outcome">${icon('check')} Прочитай принцип работы</div><div class="learning-outcome">${icon('check')} Набери команды без подсказок</div><div class="learning-outcome">${icon('check')} Повтори ошибки в другой день</div></div></aside></div>${foot()}`;}
-function startPanel(){return `<div class="eyebrow">ПРАКТИЧЕСКИЙ ТРЕНАЖЁР</div><h1 class="page-title">Команды надо писать руками</h1><p class="page-sub">Выбери формат и сложность. Тренажёр проверяет команду, показывает пояснение и планирует интервальное повторение. Никакого исполнения на сервере.</p><div class="surface" style="margin-bottom:18px"><div class="section-top" style="margin-bottom:0"><strong style="margin-right:10px;font-size:13px">Уровень сложности</strong>${[0,1,2,3,4].map(l=>`<button class="filter ${view.level===l?'active':''}" data-action="level" data-level="${l}" aria-pressed="${view.level===l}">${l===0?'Все уровни':badges[l]}</button>`).join('')}</div></div><div class="cards-2">${preset('Смешанная тренировка','Умный микс: сначала ошибки и непройденные задания, затем остальные. До 15 команд за сессию.','mixed','bolt')}${preset('Интервальное повторение',`${dueCount(view.level)} упражнений готовы к повторению. Здесь появляются ранее изученные команды, когда пора освежить память.`,'review','refresh')}${preset('Экзамен без подсказок','20 случайных заданий. До проверки ответа подсказки недоступны, результаты идут в общую статистику.','exam','trophy')}${preset('Только сложные команды','Тренировка тех команд, в которых ты ранее ошибался.','weak','target')}</div><div class="section-title"><h2>Или выбери отдельный модуль</h2><a class="text-link" href="#/courses">Сначала теория ${icon('arrow',14)}</a></div><div class="module-grid">${DATA.modules.slice(0,6).map(cardModule).join('')}</div>${foot()}`;}
+function startPanel(){return `<div class="eyebrow">ПРАКТИЧЕСКИЙ ТРЕНАЖЁР</div><h1 class="page-title">Практика Linux</h1><p class="page-sub">Выбери формат и сложность. Тренажёр проверяет команду, показывает пояснение и планирует интервальное повторение. Никакого исполнения на сервере.</p><div class="surface" style="margin-bottom:18px"><div class="section-top" style="margin-bottom:0"><strong style="margin-right:10px;font-size:13px">Уровень сложности</strong>${[0,1,2,3,4].map(l=>`<button class="filter ${view.level===l?'active':''}" data-action="level" data-level="${l}" aria-pressed="${view.level===l}">${l===0?'Все уровни':badges[l]}</button>`).join('')}</div></div><div class="cards-2">${preset('Смешанная тренировка','До 15 команд. Сначала запланированные повторения, затем новые задания по возрастанию сложности.','mixed','bolt')}${preset('Интервальное повторение',`${dueCount(view.level)} упражнений готовы к повторению. Здесь появляются ранее изученные команды, когда пора освежить память.`,'review','refresh')}${preset('Экзамен без подсказок','20 случайных заданий. До проверки ответа подсказки недоступны, результаты идут в общую статистику.','exam','trophy')}${preset('Только сложные команды','Задания с ошибками или подсказками. Два самостоятельных ответа по расписанию закрепляют команду.','weak','target')}</div>${readingLab()}<div class="section-title"><h2>Или выбери отдельный модуль</h2><a class="text-link" href="#/courses">Сначала теория ${icon('arrow',14)}</a></div><div class="module-grid">${DATA.modules.slice(0,6).map(cardModule).join('')}</div>${foot()}`;}
 function preset(title,desc,mode,ic){return `<article class="preset"><span class="glyph green">${icon(ic)}</span><h3>${h(title)}</h3><p>${h(desc)}</p><button class="btn btn-primary" data-action="start" data-mode="${mode}">Начать ${icon('arrow',15)}</button></article>`;}
-function buildQueue(mode,module,level){let arr=DATA.drills.filter(x=>!level||x.level===level);if(mode==='module')arr=DATA.modules.find(m=>m.id===module)?.drills||[];
- if(mode==='review')arr=arr.filter(x=>due(progress.drills[x.id])).sort((a,b)=>(progress.drills[a.id].due||0)-(progress.drills[b.id].due||0));
- if(mode==='weak')arr=arr.filter(x=>(progress.drills[x.id]?.fails||0)>0).sort((a,b)=>progress.drills[b.id].fails-progress.drills[a.id].fails);
- if(mode==='mixed') {let old=shuffle(arr.filter(x=>due(progress.drills[x.id])));let unseen=shuffle(arr.filter(x=>!studied(x.id)));let known=shuffle(arr.filter(x=>studied(x.id)&&!due(progress.drills[x.id])));arr=[...old,...unseen,...known];}
- else if(mode==='exam'||mode==='module')arr=shuffle(arr);
- return arr.slice(0,mode==='module'?100:mode==='review'?40:mode==='weak'?30:mode==='exam'?20:15).map(x=>x.id);
+function buildQueue(mode, module, level) {
+  const drills = DATA.drills.filter(d => !level || d.level === level);
+  const history = progress.drills;
+  if (mode === 'daily') return dailyPlan().map(item => item.id);
+  if (mode === 'mixed') return planPractice(drills, history, 15).map(item => item.id);
+  if (mode === 'single') return DATA.drills.filter(d => d.id === module).map(d => d.id);
+  if (mode === 'retry') return [...view.session.toPractice];
+  if (mode === 'review') return drills.filter(d => due(history[d.id]))
+    .sort((a, b) => history[a.id].due - history[b.id].due).slice(0, 40).map(d => d.id);
+  if (mode === 'weak') return drills.filter(d => needsPractice(history[d.id]))
+    .sort((a, b) => history[a.id].due - history[b.id].due).slice(0, 30).map(d => d.id);
+  if (mode === 'module') return shuffle(DATA.modules.find(m => m.id === module)?.drills || []).map(d => d.id);
+  return shuffle(drills).slice(0, 20).map(d => d.id);
 }
 function startTraining(mode, module) {
   const level = view.page === 'training' ? view.session.level : view.page === 'practice' ? view.level : 0;
@@ -165,7 +226,7 @@ function startTraining(mode, module) {
     toast(mode === 'review' ? 'Для выбранного уровня пока нет повторений.' : 'Для выбранного уровня пока нет подходящих заданий.');
     return;
   }
-  view.session = { mode, module, level, queue, index: 0, correct: 0, firstTry: 0, missed: 0, earned: 0, answered: [], done: false };
+  view.session = { mode, module, level, queue, index: 0, correct: 0, firstTry: 0, missed: 0, earned: 0, answered: [], toPractice: [], done: false };
   resetAnswer();
   go('training');
   if (matchMedia('(pointer: fine)').matches) focusTo('#cmd-input', true);
@@ -190,17 +251,19 @@ function checkTrainer() {
   const result = checkAnswer(view.entry, ex.answers);
   if (result.correct) {
     const perfect = s.attempts === 0 && !s.usedHint && !s.revealed;
-    s.earned += markDrill(ex, true, perfect, s.revealed, s.mode === 'exam', s.attempts > 0);
+    const reward = markDrill(ex, true, perfect, s.revealed, s.mode === 'exam', s.attempts > 0);
+    s.earned += reward;
     s.correct++;
     if (perfect) s.firstTry++;
+    else s.toPractice.push(ex.id);
     s.answered.push(true);
-    view.feedback = { type: 'good', title: perfect ? 'Верно. Без подсказок!' : 'Верно, решение найдено.', message: ex.why, answer: ex.answers[0] };
-    view.entry = '';
+    view.feedback = { type: 'good', title: perfect ? 'Верно. Без подсказок!' : 'Верно, решение найдено.', message: reward ? ex.why : ex.why + ' Сегодня это задание уже зачтено в XP и дневную цель.' };
   } else {
     s.attempts++;
     s.missed++;
     if (s.mode === 'exam') {
       s.answered.push(false);
+      s.toPractice.push(ex.id);
       markDrill(ex, false);
       view.feedback = { type: 'bad', title: 'Ответ не принят', message: `Эталонный вариант: ${ex.answers[0]}. ${ex.why}` };
     } else {
@@ -221,6 +284,7 @@ function nextTrainer(skip = false) {
     markDrill(ex, false);
     s.missed++;
     s.answered.push(false);
+    s.toPractice.push(ex.id);
   }
   s.index++;
   s.done = s.index >= s.queue.length;
@@ -230,13 +294,25 @@ function nextTrainer(skip = false) {
   else focusTo('#cmd-input');
 }
 function trainer(){const s=view.session;if(!s)return startPanel();if(s.done)return summaryTraining();const ex=currentExercise(),m=DATA.modules.find(x=>x.id===ex.moduleId),n=s.queue.length;
- const accepted=view.feedback?.type==='good',finalAnswered=!!view.feedback&&(accepted||s.mode==='exam');return `<a class="text-link" href="#/practice">${icon('back',15)} Режимы тренировки</a><div class="page-head" style="margin-top:10px"><div><div class="eyebrow">${s.mode==='exam'?'ЭКЗАМЕН':s.mode==='review'?'ПОВТОРЕНИЕ':s.mode==='weak'?'РАБОТА НАД ОШИБКАМИ':'ПРАКТИКА UBUNTU'}</div><h1 class="page-title">Задание ${s.index+1} <span style="color:var(--muted)">/ ${n}</span></h1><p class="page-sub">${h(m.title)} • ${h(badges[ex.level])}. Вводи одну команду так, как сделал бы на Ubuntu.</p></div><div class="page-head-right"><span class="tiny-badge good">+${s.earned} XP за сессию</span></div></div><div class="training-layout"><div class="train-card"><div class="train-head"><span class="eyebrow">${h(m.tag)}</span><span class="tiny-badge">${h(badges[ex.level])}</span></div><div class="train-body"><p class="prompt-label">ЗАДАЧА</p><div class="train-question" id="training-question">${h(ex.prompt)}</div><p class="prompt-label">ТВОЯ КОМАНДА</p><div class="command-wrap"><span class="command-dollar">$</span><input ${finalAnswered?'disabled':''} id="cmd-input" class="command-input" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="done" placeholder="Введи команду Linux..." value="${h(view.entry)}" aria-label="Команда Linux" aria-describedby="training-question" /></div><p class="train-helper">${s.mode==='exam'?'Экзамен: подсказки недоступны.':'Enter — проверить · команды не запускаются, ответы проверяются локально.'}</p>
+ const accepted=view.feedback?.type==='good',finalAnswered=!!view.feedback&&(accepted||s.mode==='exam');return `<a class="text-link" href="#/practice">${icon('back',15)} Режимы тренировки</a><div class="page-head" style="margin-top:10px"><div><div class="eyebrow">${s.mode==='exam'?'ЭКЗАМЕН':s.mode==='review'?'ПОВТОРЕНИЕ':s.mode==='weak'?'РАБОТА НАД ОШИБКАМИ':'ПРАКТИКА UBUNTU'}</div><h1 class="page-title">Задание ${s.index+1} <span style="color:var(--muted)">/ ${n}</span></h1><p class="page-sub">${h(m.title)} • ${h(badges[ex.level])}. ${s.mode === 'daily' ? 'Из плана на сегодня.' : 'Введи команду для этой задачи.'}</p></div><div class="page-head-right"><span class="tiny-badge good">+${s.earned} XP за сессию</span></div></div><div class="training-layout"><div class="train-card"><div class="train-head"><span class="eyebrow">${h(m.tag)}</span><span class="tiny-badge">${h(badges[ex.level])}</span></div><div class="train-body"><p class="prompt-label">ЗАДАЧА</p><div class="train-question" id="training-question">${h(ex.prompt)}</div><label class="prompt-label" for="cmd-input">ТВОЯ КОМАНДА</label><div class="command-wrap"><span class="command-dollar">$</span><input ${finalAnswered?'disabled':''} id="cmd-input" class="command-input" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="done" placeholder="Введи команду Linux..." value="${h(view.entry)}" aria-label="Команда Linux" aria-describedby="training-question" /></div><p class="train-helper">${s.mode==='exam'?'Экзамен: подсказки недоступны.':'Enter — проверить · команды не запускаются, ответы проверяются локально.'}</p>
  ${view.showHint&&!finalAnswered?`<div class="feedback hint"><strong>Подсказка</strong>${h(ex.hint)}</div>`:''}
  ${view.showSolution&&!finalAnswered?`<div class="feedback hint"><strong>Пример решения</strong><code>${h(ex.answers[0])}</code><div style="margin-top:6px">Набери его самостоятельно, чтобы закрепить.</div></div>`:''}
- ${view.feedback?`<div class="feedback ${view.feedback.type==='good'?'good':'bad'}"><strong>${h(view.feedback.title)}</strong>${h(view.feedback.message)}${accepted?`<div style="margin-top:9px"><code>$ ${h(view.feedback.answer)}</code></div>`:''}</div>`:''}
+ ${view.feedback?`<div class="feedback ${view.feedback.type==='good'?'good':'bad'}"><strong>${h(view.feedback.title)}</strong>${h(view.feedback.message)}</div>`:''}
  <div class="train-actions"><div class="train-action-left">${!finalAnswered&&s.mode!=='exam'?`<button class="btn btn-ghost btn-sm" data-action="trainer-hint" aria-pressed="${view.showHint}">${icon('light',15)} Подсказка</button><button class="btn btn-ghost btn-sm" data-action="trainer-solution" aria-pressed="${view.showSolution}">Решение</button>`:''}</div><div class="train-action-right">${!finalAnswered?`<button class="btn btn-ghost btn-sm" data-action="trainer-next" data-skip="1">Пропустить</button><button class="btn btn-primary" data-action="trainer-check">Проверить ${icon('arrow',15)}</button>`:`<button class="btn btn-primary" data-action="trainer-next">${s.index===n-1?'Завершить':'Дальше'} ${icon('arrow',15)}</button>`}</div></div></div></div>
  <div class="surface"><div class="eyebrow">ТВОЯ СЕССИЯ</div><div class="side-stat"><span>Правильных ответов</span><b>${s.correct}</b></div><div class="side-stat"><span>Ошибок / пропусков</span><b>${s.missed}</b></div><div class="side-stat"><span>С первого раза</span><b>${s.firstTry}</b></div><div class="side-stat"><span>Текущий прогресс</span><b>${s.index+1}/${n}</b></div><div class="queue-list">${s.queue.map((x,i)=>`<div class="queue-dot ${i<s.index?(s.answered[i]?'done':'miss'):i===s.index?'current':''}" title="Задание ${i+1}"></div>`).join('')}</div><div class="rule"></div><p class="sidebar-tip">${s.mode==='exam'?'На экзамене виден только результат текущего ответа. В реальном терминале нет кнопки с готовым решением.':'Программа оценивает команды в симуляторе. Иногда допустимая Linux-альтернатива может не входить в набор проверяемых вариантов.'}</p></div></div>${foot()}`;}
-function summaryTraining(){const s=view.session,pc=s.queue.length?Math.round(s.correct/s.queue.length*100):0;return `<div class="page-head"><div><div class="eyebrow">СЕССИЯ ЗАВЕРШЕНА</div><h1 class="page-title" id="training-summary" tabindex="-1">Практика засчитана</h1><p class="page-sub">Каждое повторение делает команды привычнее. Проблемные задания можно повторить позже.</p></div></div><div class="result-box"><div class="check">${icon('trophy',48)}</div><div class="summary-score">${pc}%</div><h2>Верно ${s.correct} из ${s.queue.length}</h2><p>С первого раза ${s.firstTry}. Ошибок и пропусков ${s.missed}. Заработано +${s.earned} XP.</p><div class="actions" style="justify-content:center;margin-top:18px"><button class="btn btn-primary" data-action="start" data-mode="${s.mode}" data-id="${s.module||''}">Ещё одна сессия ${icon('arrow',15)}</button><a class="btn" href="#/">На главную</a></div></div>${stats()}${foot()}`;}
+function summaryTraining() {
+  const s = view.session;
+  const retry = s.toPractice.length;
+  const repeatMode = !['single', 'daily', 'retry'].includes(s.mode) && buildQueue(s.mode, s.module, s.level).length ? s.mode : 'daily';
+  return `<div class="page-head"><div><div class="eyebrow">Сессия завершена</div>
+    <h1 class="page-title" id="training-summary" tabindex="-1">Результат тренировки</h1></div></div>
+    <div class="result-box"><div class="check">${icon('trophy', 38)}</div>
+    <h2>Верно ${s.correct} из ${s.queue.length}</h2><p>Самостоятельно с первой попытки — ${s.firstTry}. Заработано ${s.earned} XP.</p>
+    ${retry ? `<div class="recap"><h3>Стоит закрепить · ${retry}</h3><ul>${s.toPractice.map(id => `<li>${h(DATA.drills.find(d => d.id === id).prompt)}</li>`).join('')}</ul></div>` : ''}
+    <div class="actions result-actions">${retry ? `<button class="btn btn-primary" data-action="start" data-mode="retry">Повторить трудные задания</button>` : ''}
+      <button class="btn ${retry ? 'btn-ghost' : 'btn-primary'}" data-action="start" data-mode="${repeatMode}" data-id="${h(s.module || '')}">${repeatMode === 'daily' ? 'Следующая подборка' : 'Ещё одна сессия'} ${icon('arrow', 15)}</button>
+      <a class="btn" href="#/practice">Все режимы</a></div></div>${foot()}`;
+}
 function incidentList(){let filtered=DATA.incidents.filter(x=>view.incidentFilter===0||x.level===view.incidentFilter);return `<div class="page-head"><div><div class="eyebrow">ИНЖЕНЕРНАЯ ДИАГНОСТИКА</div><h1 class="page-title">Инциденты Linux</h1><p class="page-sub">${DATA.incidents.length} учебных расследований: от упавшего nginx до OOM, DNS, TCP ACL и Docker. Пиши команды — симулятор возвращает диагностический вывод. Никаких опасных действий на настоящих серверах.</p></div></div><div class="section-top">${[0,1,2,3].map(l=>`<button class="filter ${view.incidentFilter===l?'active':''}" data-action="incident-filter" data-level="${l}" aria-pressed="${view.incidentFilter===l}">${l===0?'Все кейсы':badges[l]}</button>`).join('')}</div><div class="module-grid">${filtered.map(cardIncident).join('')}</div>${foot()}`;}
 function openIncident(id) {
   const scenario = DATA.incidents.find(item => item.id === id);
@@ -306,7 +382,7 @@ function incidentDetail() {
     ${foot()}`;
 }
 
-function reviewPage(){const arr=DATA.drills.filter(x=>due(progress.drills[x.id]));const weak=DATA.drills.filter(x=>(progress.drills[x.id]?.fails||0)>0).sort((a,b)=>progress.drills[b.id].fails-progress.drills[a.id].fails);return `<div class="page-head"><div><div class="eyebrow">ЗАПОМИНАНИЕ С ПОВТОРЕНИЕМ</div><h1 class="page-title">Повторение команд</h1><p class="page-sub">После успешного ответа интервалы растут: 1 → 3 → 7 → 14 → 30 → 60 дней. Ошибка отправляет команду на ближайшее повторение, чтобы закрепить слабое место.</p></div></div><div class="cards-2"><div class="surface"><div class="stat-title">Команд пора повторить</div><div class="summary-score" style="font-size:50px;margin:8px 0">${arr.length}</div><p class="small-note">По плану интервального повторения</p><button class="btn btn-primary" data-action="start" data-mode="review" ${arr.length?'':'disabled'}>Начать повторение ${icon('arrow',15)}</button></div><div class="surface"><div class="stat-title">Вопросов с ошибками</div><div class="summary-score" style="font-size:50px;margin:8px 0">${weak.length}</div><p class="small-note">Список заданий, которые стоит переучить</p><button class="btn btn-soft" data-action="start" data-mode="weak" ${weak.length?'':'disabled'}>Работа над ошибками ${icon('arrow',15)}</button></div></div><div class="section-title"><h2>Очередь повторения</h2></div>${arr.length?`<div class="surface" style="padding:0">${arr.slice(0,15).map(x=>`<div class="review-item"><span class="glyph">${icon('refresh',17)}</span><div><strong>${h(x.prompt)}</strong><small>${h(DATA.modules.find(m=>m.id===x.moduleId).title)}</small></div><span class="review-pill">Пора</span></div>`).join('')}</div>`:`<div class="empty"><span class="glyph green">${icon('check')}</span><h3>На сегодня всё повторено</h3><p>Изучи новые команды — они появятся здесь по расписанию.</p><button class="btn btn-primary" data-action="start" data-mode="mixed">Новые упражнения</button></div>`}${foot()}`;}
+function reviewPage(){const arr=DATA.drills.filter(x=>due(progress.drills[x.id]));const weak=DATA.drills.filter(x=>needsPractice(progress.drills[x.id])).sort((a,b)=>progress.drills[b.id].fails-progress.drills[a.id].fails);return `<div class="page-head"><div><div class="eyebrow">ЗАПОМИНАНИЕ С ПОВТОРЕНИЕМ</div><h1 class="page-title">Повторение команд</h1><p class="page-sub">После успешного ответа интервалы растут: 1 → 3 → 7 → 14 → 30 → 60 дней. Ошибка отправляет команду на ближайшее повторение, чтобы закрепить слабое место.</p></div></div><div class="cards-2"><div class="surface"><div class="stat-title">Команд пора повторить</div><div class="summary-score" style="font-size:50px;margin:8px 0">${arr.length}</div><p class="small-note">По плану интервального повторения</p><button class="btn btn-primary" data-action="start" data-mode="review" ${arr.length?'':'disabled'}>Начать повторение ${icon('arrow',15)}</button></div><div class="surface"><div class="stat-title">Стоит закрепить</div><div class="summary-score" style="font-size:50px;margin:8px 0">${weak.length}</div><p class="small-note">После ошибки или подсказки. Два самостоятельных ответа по расписанию убирают задание из списка.</p><button class="btn btn-soft" data-action="start" data-mode="weak" ${weak.length?'':'disabled'}>Работа над ошибками ${icon('arrow',15)}</button></div></div><div class="section-title"><h2>Очередь повторения</h2></div>${arr.length?`<div class="surface" style="padding:0">${arr.slice(0,15).map(x=>`<div class="review-item"><span class="glyph">${icon('refresh',17)}</span><div><strong>${h(x.prompt)}</strong><small>${h(DATA.modules.find(m=>m.id===x.moduleId).title)}</small></div><span class="review-pill">Пора</span></div>`).join('')}</div>`:`<div class="empty"><span class="glyph green">${icon('check')}</span><h3>На сегодня всё повторено</h3><p>Изучи новые команды — они появятся здесь по расписанию.</p><button class="btn btn-primary" data-action="start" data-mode="mixed">Новые упражнения</button></div>`}${foot()}`;}
 function handbookRows(){const q=view.handbookQuery.toLocaleLowerCase('ru').trim();const items=DATA.handbook.filter(x=>(view.handbookCat==='Все'||x[0]===view.handbookCat)&&(!q||x.join(' ').toLocaleLowerCase('ru').includes(q)));return items.length?items.map((x,i)=>`<div class="handbook-row"><span class="tiny-badge">${h(x[0])}</span><code>${h(x[1])}</code><span class="desc">${h(x[2])}</span><button class="copy-btn" data-action="copy" data-copy="${h(x[1])}" title="Копировать команду" aria-label="Копировать команду">${icon('copy')}</button></div>`).join(''):`<div class="empty">Ничего не найдено. Попробуй другой запрос.</div>`;}
 function handbookPage(){const cats=['Все',...new Set(DATA.handbook.map(x=>x[0]))];return `<div class="page-head"><div><div class="eyebrow">КАРМАННЫЙ СПРАВОЧНИК</div><h1 class="page-title">Linux cheat sheet</h1><p class="page-sub">${DATA.handbook.length} готовых примеров для проверки синтаксиса. Но для устойчивой памяти полезнее сначала попытаться вспомнить команду самому.</p></div></div><div class="search-row"><input id="handbook-search" class="search" aria-label="Поиск по справочнику" placeholder="Поиск: journalctl, сеть, диски..." value="${h(view.handbookQuery)}" autocomplete="off"><select id="handbook-cat" class="select" aria-label="Категория">${cats.map(x=>`<option value="${h(x)}" ${view.handbookCat===x?'selected':''}>${h(x)}</option>`).join('')}</select></div><div class="handbook-table" id="handbook-results">${handbookRows()}</div>${foot()}`;}
 let offlineStatus = 'Проверяется';
@@ -421,10 +497,31 @@ app.addEventListener('click', event => {
       break;
     }
     case 'quick-start':
-      startTraining('mixed');
+      startTraining('daily');
       break;
     case 'start':
       startTraining(mode, id);
+      break;
+    case 'reading-answer': {
+      const item = readings[readingIndex];
+      readingChoice = Number(target.dataset.index);
+      const correct = readingChoice === item.correct;
+      if (correct && !progress.readings?.[item.drill]) {
+        progress.readings ??= {};
+        progress.readings[item.drill] = Date.now();
+        save();
+      }
+      render();
+      announce(item.options[readingChoice][1]);
+      focusTo(correct ? '[data-action="reading-next"]' : `[data-action="reading-answer"][data-index="${readingChoice}"]`, true);
+      break;
+    }
+    case 'reading-next':
+      readingIndex = (readingIndex + 1) % readings.length;
+      readingChoice = null;
+      render();
+      document.querySelector('#reading-title').tabIndex = -1;
+      focusTo('#reading-title');
       break;
     case 'trainer-check':
       checkTrainer();
@@ -511,6 +608,8 @@ app.addEventListener('keydown', event => {
 function restoreProgress(next, message) {
   if (!save(next)) return;
   progress = next;
+  readingIndex = undefined;
+  readingChoice = null;
   view.session = null;
   view.incident = null;
   go('home');

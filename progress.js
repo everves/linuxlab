@@ -23,8 +23,11 @@ export function parseProgress(json) {
     !DAILY_GOALS.includes(data.settings.dailyGoal) ||
     (data.createdAt !== undefined && !count(data.createdAt)) ||
     !mapOf(data.drills, contentId, row =>
-      [row.seen, row.correct, row.fails, row.streak, row.interval, row.due, row.last].every(count)
+      [row.seen, row.correct, row.fails, row.streak, row.interval, row.due, row.last].every(count) &&
+      (row.relearning === undefined || typeof row.relearning === 'boolean') &&
+      (row.lastCreditDay === undefined || (typeof row.lastCreditDay === 'string' && localDate.test(row.lastCreditDay)))
     ) ||
+    (data.readings !== undefined && (!record(data.readings) || !Object.entries(data.readings).every(([id, time]) => contentId.test(id) && count(time)))) ||
     !mapOf(data.incidents, contentId, row => row.done === true && count(row.completedAt)) ||
     !mapOf(data.daily, localDate, row => [row.drills, row.incidents].every(count))
   ) {

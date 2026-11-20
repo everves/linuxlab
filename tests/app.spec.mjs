@@ -104,3 +104,46 @@ test('cached deep links reload offline and sibling caches survive', async ({ pag
   const missingAssetFailed = await page.evaluate(() => fetch('./missing.css').then(() => false, () => true));
   expect(missingAssetFailed).toBe(true);
 });
+
+test('interpret terminal output offline, train the same command and retry only what needed help', async ({ page, context }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('./');
+  await page.waitForFunction(() => !!navigator.serviceWorker.controller);
+  await context.setOffline(true);
+  await page.reload();
+  await page.getByRole('button', { name: 'На корневом разделе закончилось место' }).click();
+  await expect(page.locator('.reading-feedback')).toContainText('24G');
+  await page.getByRole('button', { name: 'Раздел /var заполнен' }).click();
+  await expect(page.locator('.lab-count')).toHaveText('Разобрано 1/5');
+  await page.getByRole('button', { name: 'Набрать команду' }).click();
+  await expect(page.locator('#training-question')).toContainText('заполненность файловых систем');
+  const input = page.getByRole('textbox', { name: 'Команда Linux' });
+  await input.fill('pwd');
+  await input.press('Enter');
+  await input.fill('df -h');
+  await input.press('Enter');
+  await expect(input).toHaveValue('df -h');
+  await page.getByRole('button', { name: 'Завершить' }).click();
+  await expect(page.locator('.recap li')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Повторить трудные задания' }).click();
+  await input.fill('df -h');
+  await input.press('Enter');
+  await expect(page.locator('.feedback.good')).toContainText('уже зачтено');
+  await expect(page.locator('.xp-pill')).toHaveText(/5 XP/);
+  await page.goto('./');
+  await page.reload();
+  await expect(page.locator('#reading-title')).toHaveText('Оперативная память');
+  await expect(page.locator('.lab-count')).toHaveText('Разобрано 1/5');
+});
+
+test('the dashboard preview matches the daily exercise across screen sizes', async ({ page }) => {
+  for (const width of [320, 768, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto('./');
+    const prompt = await page.locator('.plan-preview strong').textContent();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    await page.getByRole('button', { name: 'Начать тренировку' }).click();
+    await expect(page.locator('#training-question')).toHaveText(prompt);
+    await expect(page.getByRole('heading', { name: /Задание 1.*5/ })).toBeVisible();
+  }
+});
