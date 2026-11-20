@@ -1,5 +1,5 @@
 /* LinuxLab — offline, local-only training app. */
-import { answersMatch } from './answers.js';
+import { checkAnswer, checkIncidentCommand } from './answers.js';
 import { DAILY_GOALS, PROGRESS_KEY, loadProgress, newProgress, parseProgress } from './progress.js';
 import { readRoute, routePath } from './routes.js';
 import { registerOffline } from './pwa.js';
@@ -187,7 +187,8 @@ function checkTrainer() {
     return;
   }
 
-  if (ex.answers.some(answer => answersMatch(view.entry, answer))) {
+  const result = checkAnswer(view.entry, ex.answers);
+  if (result.correct) {
     const perfect = s.attempts === 0 && !s.usedHint && !s.revealed;
     s.earned += markDrill(ex, true, perfect, s.revealed, s.mode === 'exam', s.attempts > 0);
     s.correct++;
@@ -203,7 +204,7 @@ function checkTrainer() {
       markDrill(ex, false);
       view.feedback = { type: 'bad', title: 'Ответ не принят', message: `Эталонный вариант: ${ex.answers[0]}. ${ex.why}` };
     } else {
-      view.feedback = { type: 'bad', title: 'Пока не совсем', message: 'Проверь подкоманду, флаги и аргументы. При необходимости открой подсказку.' };
+      view.feedback = { type: 'bad', title: 'Пока не совсем', message: result.message };
     }
   }
 
@@ -249,10 +250,12 @@ function openIncident(id) {
 }
 function currentIncident(){return DATA.incidents.find(x=>x.id===view.incident?.id);}
 function submitIncident(){const session=view.incident,s=currentIncident();if(!session||!s||session.finished)return;const entered=view.incidentEntry.trim();if(!entered){toast('Напиши команду для следующего шага.');return;}
- const stage=s.steps[session.stage];session.history.push({type:'input',text:entered});const ok=stage.patterns.some(p=>{try{return new RegExp(p,'i').test(entered)}catch{return false}});
+ const stage = s.steps[session.stage];
+ session.history.push({ type: 'input', text: entered });
+ const { correct: ok, message } = checkIncidentCommand(entered, stage);
  if(ok){session.history.push({type:'output',text:stage.output});session.history.push({type:'good',text:'✓ '+stage.learning});session.stage++;session.attempts=0;view.incidentHint=false;
  if(session.stage>=s.steps.length){session.finished=true;const prev=progress.incidents[s.id];if(!prev?.done){progress.xp+=60;logActivity('incidents');}progress.incidents[s.id]={done:true,completedAt:Date.now()};save();session.history.push({type:'system',text:'ИНЦИДЕНТ ЗАВЕРШЁН · Первопричина локализована.'});}
- }else{session.attempts++;const msg=session.attempts<2?'Команда не является ожидаемым шагом в этом сценарии. Подумай, какие данные нужны для текущей цели.':'В симуляторе поддержаны не все реальные команды. Проверь цель шага или открой подсказку.';session.history.push({type:'bad',text:'↳ '+msg});}
+ }else{session.attempts++;const msg=message || (session.attempts<2?'Команда не является ожидаемым шагом в этом сценарии. Подумай, какие данные нужны для текущей цели.':'В симуляторе поддержаны не все реальные команды. Проверь цель шага или открой подсказку.');session.history.push({type:'bad',text:'↳ '+msg});}
  view.incidentEntry = '';
  render();
  announce(ok && !session.finished ? `Шаг пройден. ${stage.learning} Следующий шаг. ${s.steps[session.stage].goal}` : session.history.at(-1).text);
