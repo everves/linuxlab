@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { answersMatch, checkAnswer, checkIncidentCommand } from '../answers.js';
 import { newProgress, parseProgress } from '../progress.js';
+import { needsPractice, planPractice, recordAnswer } from '../learning.js';
+import { readings } from '../readings.js';
 import { readRoute, routePath } from '../routes.js';
 
 globalThis.window = {};
@@ -103,4 +105,63 @@ test('routes round trip from the GitHub Pages fragment', () => {
   assert.deepEqual(readRoute('#/incidents/unknown', data), { page: 'incidents' });
   assert.deepEqual(readRoute('#/practice/session', data), { page: 'training' });
   assert.deepEqual(readRoute('#/constructor', data), { page: 'home' });
+});
+
+test('plan starts at beginner level, interleaves modules and prioritizes overdue work', () => {
+  const first = planPractice(data.drills, {}, 5, 900);
+  assert.equal(first.length, 5);
+  assert.equal(first[0].id, 'files-01');
+  assert.equal(new Set(first.slice(0, 3).map(d => d.id.split('-')[0])).size, 3);
+  for (const entry of first) assert.equal(data.drills.find(d => d.id === entry.id).level, 1);
+  const history = {
+    'storage-02': { seen: 1, due: 800, fails: 1, streak: 0 },
+    'files-01': { seen: 2, due: 850, fails: 0, streak: 2 },
+    'reading-01': { seen: 1, due: 1000, fails: 0, streak: 1 },
+  };
+  const plan = planPractice(data.drills, history, 3, 900);
+  assert.deepEqual(plan.slice(0, 2), [
+    { id: 'storage-02', reason: 'Сложное задание' },
+    { id: 'files-01', reason: 'Пора повторить' },
+  ]);
+  assert.equal(plan[2].reason, 'Новая команда');
+  const one = data.drills.filter(d => d.id === 'reading-01');
+  assert.deepEqual(planPractice(one, history, 5, 900), [{ id: 'reading-01', reason: 'Для закрепления' }]);
+});
+
+test('assistance restarts spacing and only scheduled independent recall clears a weak drill', () => {
+  const clean = { correct: true, independent: true };
+  const previous = recordAnswer(undefined, clean, 100);
+  for (const hadMiss of [true, false]) {
+    const helped = recordAnswer(previous, { correct: true, independent: false, hadMiss }, 200);
+    assert.ok(needsPractice(helped));
+    assert.equal(helped.streak, 0);
+    assert.equal(helped.fails, Number(hadMiss));
+    const early = recordAnswer(helped, clean, 201);
+    assert.equal(early.streak, 0);
+    assert.equal(early.due, helped.due);
+    const first = recordAnswer(early, clean, early.due);
+    assert.ok(needsPractice(first));
+    assert.equal(first.interval, 1);
+    const second = recordAnswer(first, clean, first.due);
+    assert.equal(needsPractice(second), false);
+    assert.equal(second.interval, 3);
+    assert.equal(previous.streak, 1);
+  }
+  const missed = recordAnswer(previous, { correct: false }, 300);
+  assert.equal(missed.due, 300);
+  assert.equal(missed.interval, 0);
+  assert.ok(needsPractice(missed));
+});
+
+test('each output exercise links to an accepted command and progress round trips with old backups', () => {
+  assert.equal(new Set(readings.map(item => item.drill)).size, readings.length);
+  for (const item of readings) {
+    const drill = data.drills.find(d => d.id === item.drill);
+    assert.ok(checkAnswer(item.command, drill.answers).correct, item.drill);
+    assert.ok(item.options[item.correct]);
+    assert.ok(item.options.every(([choice, why]) => choice && why));
+  }
+  const backup = { ...newProgress(), readings: { 'storage-01': 12345 } };
+  assert.deepEqual(parseProgress(JSON.stringify(backup)), backup);
+  assert.throws(() => parseProgress(JSON.stringify({ ...backup, readings: { 'storage-01': -1 } })));
 });
