@@ -114,7 +114,7 @@ test('interpret terminal output offline, train the same command and retry only w
   await page.getByRole('button', { name: 'На корневом разделе закончилось место' }).click();
   await expect(page.locator('.reading-feedback')).toContainText('24G');
   await page.getByRole('button', { name: 'Раздел /var заполнен' }).click();
-  await expect(page.locator('.lab-count')).toHaveText('Разобрано 1/5');
+  await expect(page.locator('.lab-count')).toHaveText('Разобрано 1/200');
   await page.getByRole('button', { name: 'Набрать команду' }).click();
   await expect(page.locator('#training-question')).toContainText('заполненность файловых систем');
   const input = page.getByRole('textbox', { name: 'Команда Linux' });
@@ -133,7 +133,7 @@ test('interpret terminal output offline, train the same command and retry only w
   await page.goto('./');
   await page.reload();
   await expect(page.locator('#reading-title')).toHaveText('Оперативная память');
-  await expect(page.locator('.lab-count')).toHaveText('Разобрано 1/5');
+  await expect(page.locator('.lab-count')).toHaveText('Разобрано 1/200');
 });
 
 test('the dashboard preview matches the daily exercise across screen sizes', async ({ page }) => {
@@ -146,4 +146,41 @@ test('the dashboard preview matches the daily exercise across screen sizes', asy
     await expect(page.locator('#training-question')).toHaveText(prompt);
     await expect(page.getByRole('heading', { name: /Задание 1.*5/ })).toBeVisible();
   }
+});
+
+test('reading library keeps old completions and tracks cases of the same command separately offline', async ({ page, context }) => {
+  const legacy = { ...newProgress(), readings: {
+    'storage-01': 1, 'processes-04': 1, 'systemd-04': 1, 'storage-02': 1, 'reading-07': 1,
+  } };
+  await page.setViewportSize({ width: 320, height: 800 });
+  await page.goto('./');
+  await page.evaluate(({ key, progress }) => localStorage.setItem(key, JSON.stringify(progress)), {
+    key: PROGRESS_KEY, progress: legacy,
+  });
+  await page.waitForFunction(() => !!navigator.serviceWorker.controller);
+  await context.setOffline(true);
+  await page.reload();
+  const counter = page.locator('.lab-count');
+  const topic = page.getByLabel('Тема', { exact: true });
+  const picker = page.getByLabel('Пример', { exact: true });
+  await expect(counter).toHaveText('Разобрано 5/200');
+  await expect(picker.locator('option')).toHaveCount(200);
+  await topic.selectOption('docker');
+  await expect(picker.locator('option')).toHaveCount(15);
+  await picker.selectOption('docker-01-exit');
+  await page.getByRole('button', { name: 'Контейнер завершился с нулевым кодом' }).click();
+  await expect(counter).toHaveText('Разобрано 6/200');
+  await expect(picker.locator('option:checked')).toContainText('пройдено');
+  await page.getByRole('button', { name: 'Другой пример' }).click();
+  await expect(picker).toHaveValue('docker-01-restart');
+  await page.getByRole('button', { name: 'Контейнер в цикле перезапуска после завершения с кодом 1' }).click();
+  await expect(counter).toHaveText('Разобрано 7/200');
+  await page.getByRole('button', { name: 'Набрать команду' }).click();
+  await expect(page.locator('#training-question')).toHaveText('Покажи все контейнеры, включая остановленные');
+  await page.goto('./#/practice');
+  await expect(counter).toHaveText('Разобрано 7/200');
+  await topic.selectOption('observability');
+  await picker.selectOption('observability-06-delta');
+  await expect(page.locator('#reading-title')).toContainText('Два замера');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
 });

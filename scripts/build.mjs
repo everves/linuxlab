@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const output = join(root, 'dist');
-const versioned = ['app.js', 'answers.js', 'content.js', 'learning.js', 'readings.js', 'progress.js', 'pwa.js', 'routes.js', 'styles.css'];
+const versioned = ['app.js', 'answers.js', 'content.js', 'learning.js', 'reading-cases.js', 'readings.js', 'progress.js', 'pwa.js', 'routes.js', 'styles.css'];
 const icons = (await readdir(join(root, 'icons'))).filter(name => name.endsWith('.png')).sort();
 const files = ['index.html', 'manifest.webmanifest', 'sw.js', ...versioned, ...icons.map(name => `icons/${name}`)];
 const source = new Map(await Promise.all(files.map(async file => [file, await readFile(join(root, file))])));

@@ -150,20 +150,33 @@ function dailyPlan() {
   return planPractice(DATA.drills, progress.drills, remaining > 0 ? Math.min(5, remaining) : 5);
 }
 
-let readingIndex;
+const readingTopicOf = item => item.drill.split('-')[0];
+const readingTopics = DATA.modules.filter(module => readings.some(item => readingTopicOf(item) === module.id));
+let readingTopic = '';
+let readingId;
 let readingChoice = null;
+const wasRead = item => Object.hasOwn(progress.readings || {}, item.id);
+const topicReadings = () => readingTopic ? readings.filter(item => readingTopicOf(item) === readingTopic) : readings;
+
 function readingLab() {
-  if (readingIndex === undefined) {
-    readingIndex = Math.max(0, readings.findIndex(item => !progress.readings?.[item.drill]));
-  }
-  const item = readings[readingIndex];
+  const collection = topicReadings();
+  if (!readingId) readingId = (collection.find(item => !wasRead(item)) || collection[0]).id;
+  const item = collection.find(entry => entry.id === readingId);
   const answered = readingChoice !== null;
   const correct = readingChoice === item.correct;
-  const solved = readings.filter(r => progress.readings?.[r.drill]).length;
+  const solved = readings.filter(wasRead).length;
   const response = answered ? item.options[readingChoice][1] : '';
   return `<section class="reading-lab" aria-labelledby="reading-title">
     <div class="lab-heading"><div><div class="eyebrow">Чтение вывода</div><h2 id="reading-title">${h(item.title)}</h2></div>
       <span class="lab-count">Разобрано ${solved}/${readings.length}</span></div>
+    <div class="lab-selectors">
+      <label>Тема<select id="reading-topic" class="select"><option value="">Все темы</option>
+        ${readingTopics.map(topic => `<option value="${topic.id}" ${readingTopic === topic.id ? 'selected' : ''}>${h(topic.title)}</option>`).join('')}
+      </select></label>
+      <label>Пример<select id="reading-case" class="select">
+        ${collection.map(example => `<option value="${example.id}" ${example.id === item.id ? 'selected' : ''}>${h(example.title)}${wasRead(example) ? ' · пройдено' : ''}</option>`).join('')}
+      </select></label>
+    </div>
     <div class="lab-grid"><div class="sample-terminal"><div class="terminal-caption">${icon('terminal', 15)} Учебный терминал</div>
       <code><span aria-hidden="true">$ </span>${h(item.command)}</code>
       <pre tabindex="0" aria-label="Пример вывода команды">${h(item.output)}</pre></div>
@@ -171,7 +184,7 @@ function readingLab() {
       ${item.options.map(([label], index) => `<button class="reading-option ${index === readingChoice ? (correct ? 'right' : 'wrong') : ''}" data-action="reading-answer" data-index="${index}" ${correct ? 'disabled' : ''}>${h(label)}${index === readingChoice ? icon(correct ? 'check' : 'info', 16) : ''}</button>`).join('')}
       ${answered ? `<div class="reading-feedback ${correct ? 'right' : ''}"><strong>${correct ? 'Верно.' : 'Посмотри ещё раз.'}</strong> ${h(response)}</div>` : ''}
     </div></div>
-    <div class="lab-footer"><span>Пример ${readingIndex + 1} из ${readings.length}</span><div class="actions">
+    <div class="lab-footer"><span>Пример ${collection.indexOf(item) + 1} из ${collection.length}${readingTopic ? ' в теме' : ''}</span><div class="actions">
       ${correct ? `<button class="btn btn-soft" data-action="start" data-mode="single" data-id="${item.drill}">Набрать команду</button>` : ''}
       <button class="btn btn-ghost" data-action="reading-next">Другой пример ${icon('arrow', 14)}</button></div></div>
     </section>`;
@@ -503,12 +516,12 @@ app.addEventListener('click', event => {
       startTraining(mode, id);
       break;
     case 'reading-answer': {
-      const item = readings[readingIndex];
+      const item = readings.find(example => example.id === readingId);
       readingChoice = Number(target.dataset.index);
       const correct = readingChoice === item.correct;
-      if (correct && !progress.readings?.[item.drill]) {
+      if (correct && !wasRead(item)) {
         progress.readings ??= {};
-        progress.readings[item.drill] = Date.now();
+        progress.readings[item.id] = Date.now();
         save();
       }
       render();
@@ -516,13 +529,17 @@ app.addEventListener('click', event => {
       focusTo(correct ? '[data-action="reading-next"]' : `[data-action="reading-answer"][data-index="${readingChoice}"]`, true);
       break;
     }
-    case 'reading-next':
-      readingIndex = (readingIndex + 1) % readings.length;
+    case 'reading-next': {
+      const collection = topicReadings();
+      const current = collection.findIndex(item => item.id === readingId);
+      const rest = [...collection.slice(current + 1), ...collection.slice(0, current)];
+      readingId = (rest.find(item => !wasRead(item)) || rest[0] || collection[current]).id;
       readingChoice = null;
       render();
       document.querySelector('#reading-title').tabIndex = -1;
       focusTo('#reading-title');
       break;
+    }
     case 'trainer-check':
       checkTrainer();
       break;
@@ -608,7 +625,8 @@ app.addEventListener('keydown', event => {
 function restoreProgress(next, message) {
   if (!save(next)) return;
   progress = next;
-  readingIndex = undefined;
+  readingTopic = '';
+  readingId = undefined;
   readingChoice = null;
   view.session = null;
   view.incident = null;
@@ -617,6 +635,18 @@ function restoreProgress(next, message) {
 }
 
 app.addEventListener('change', async ({ target }) => {
+  if (target.id === 'reading-topic' || target.id === 'reading-case') {
+    if (target.id === 'reading-topic') {
+      readingTopic = target.value;
+      readingId = undefined;
+    } else {
+      readingId = target.value;
+    }
+    readingChoice = null;
+    render();
+    focusTo('#' + target.id, true);
+    announce(document.querySelector('#reading-title').textContent);
+  }
   if (target.id === 'handbook-cat') {
     view.handbookCat = target.value;
     document.getElementById('handbook-results').innerHTML = handbookRows();
