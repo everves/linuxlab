@@ -107,7 +107,7 @@ mk('network','Сеть, маршруты и DNS','СЕТЬ',2,'Диагност�
 02§Покажи таблицу маршрутизации IPv4§ip -4 route‖ip route§Нужна команда ip route.§Смотри default route и специфичные префиксы.
 03§Узнай маршрут до 8.8.8.8§ip route get 8.8.8.8§Команда ip route get.§Покажет next-hop и исходный IP для выбранного адреса.
 04§Покажи TCP-порты в состоянии LISTEN вместе с процессами§sudo ss -lntp‖ss -lntp‖sudo ss -tlnp‖ss -tlnp§ss + l n t p.§-l слушающие, -n цифровые адреса, -t TCP, -p процессы.
-05§Проверь TCP-подключение к 10.10.20.15:5432§nc -vz 10.10.20.15 5432§netcat с -v -z.§nc -vz делает connect-проверку без передачи полезной нагрузки.
+05§Проверь TCP-подключение к 10.10.20.15:5432§nc -vz 10.10.20.15 5432§У nc два флага: -v для подробного вывода и -z для проверки без передачи данных. Их можно написать вместе или раздельно.§nc -vz делает connect-проверку без передачи полезной нагрузки.
 06§Проверь DNS-ответ для example.com§dig example.com‖resolvectl query example.com§dig или resolvectl query.§Имя может не разрешаться даже при исправной IP-связности.
 07§Запроси DNS-запись example.com у сервера 1.1.1.1§dig @1.1.1.1 example.com§У dig явный DNS задаётся через @.§Помогает отделить проблему локального резолвера от удалённого.
 08§Покажи конфигурацию DNS через systemd-resolved§resolvectl status§Команда resolvectl.§На Ubuntu с resolved DNS настраивается по интерфейсам.
@@ -249,6 +249,7 @@ mk('observability','Продвинутая диагностика','ЭКСПЕР
 ];
 
 const step = (goal, patterns, output, learning, hint) => ({goal, patterns, output, learning, hint});
+const commandStep = (goal, command, output, learning) => ({goal, command, output, learning, hint: command});
 const S = (id, title, level, category, summary, symptoms, rootCause, steps, debrief, icon) => ({id,title,level,category,summary,symptoms,rootCause,steps,debrief,icon});
 const incidents = [
 S('nginx-down','Nginx не запускается',1,'systemd / Nginx','После изменения конфигурации сайт не отвечает.', ['HTTP: connection refused','Мониторинг: nginx inactive (failed)'], 'Ошибка синтаксиса в конфиге: listen 80888', [
@@ -262,7 +263,7 @@ S('no-dns','IP доступен, домен не открывается',1,'Се
  step('Покажи адреса и маршруты',['^ip\\s+(-br\\s+)?(addr|a|route)|^ip\\s+-4\\s+route'], 'ens3 UP 10.20.0.25/24\ndefault via 10.20.0.1 dev ens3', 'L3-конфигурация на месте.', 'ip -br addr'),
  step('Проверь, может ли резолвер разрешить имя',['^(dig|resolvectl\\s+query|nslookup)\\s+example\\.com'], ';; communications error to 10.20.0.53#53: timed out\n;; no servers could be reached', 'DNS-запрос не получает ответа.', 'dig example.com'),
  step('Посмотри конфигурацию DNS',['^resolvectl\\s+status|^cat\\s+/etc/resolv\\.conf'], 'Link 2 (ens3)\n  Current DNS Server: 10.20.0.53\n  DNS Servers: 10.20.0.53', 'Нужна проверка доступности конкретного DNS.', 'resolvectl status'),
- step('Проверь доступность DNS-сервера по TCP/53',['^nc\\s+-vz\\s+10\\.20\\.0\\.53\\s+53'], 'nc: connect to 10.20.0.53 port 53 (tcp) timed out', 'Неисправность DNS-пути подтверждена для TCP; UDP/53 нужно проверять отдельно.', 'nc -vz 10.20.0.53 53')
+ commandStep('Проверь доступность DNS-сервера по TCP/53', 'nc -vz 10.20.0.53 53', 'nc: connect to 10.20.0.53 port 53 (tcp) timed out', 'Неисправность DNS-пути подтверждена для TCP; UDP/53 нужно проверять отдельно.')
 ], 'В реальной сети выясни, почему DNS недоступен (маршрут, ACL, сам DNS), вместо бессистемной замены на публичный.', 'network'),
 S('disk-full','Диск заполнен на 100%',1,'Хранилище','Приложение перестало писать логи и создавать файлы.', ['No space left on device','/var недоступен для записи'], 'В /var/log накопился большой старый application.log', [
  step('Проверь свободное место',['^df\\s+(-h|--human-readable)'], 'Filesystem      Size  Used Avail Use% Mounted on\n/dev/vda1        40G   40G     0 100% /', 'Проблема подтверждена на файловой системе.', 'df -h'),
@@ -271,7 +272,7 @@ S('disk-full','Диск заполнен на 100%',1,'Хранилище','Пр
  step('Проверь удалённые открытые файлы',['^(sudo\\s+)?lsof\\s+\\+L1'], 'No open deleted files found', 'Освобождение места безопаснее планировать с владельцем сервиса, не удаляя логи вслепую.', 'sudo lsof +L1')
 ], 'Не начинай с rm -rf /var/log. Ищи причину роста и настрой ротацию, чтобы инцидент не повторился.', 'hard-drive'),
 S('ssh-refused','SSH: Connection refused',1,'SSH / Сеть','До хоста пингуется, SSH не подключается.', ['ssh: connect to host 10.0.0.8 port 22: Connection refused'], 'На сервере ssh.service остановлен', [
- step('Проверь TCP-порт',['^nc\\s+-vz\\s+10\\.0\\.0\\.8\\s+22'], 'nc: connect to 10.0.0.8 port 22 (tcp) failed: Connection refused', 'До хоста есть TCP-ответ, но слушатель отсутствует или порт отклоняется.', 'nc -vz 10.0.0.8 22'),
+ commandStep('Проверь TCP-порт', 'nc -vz 10.0.0.8 22', 'nc: connect to 10.0.0.8 port 22 (tcp) failed: Connection refused', 'До хоста есть TCP-ответ, но слушатель отсутствует или порт отклоняется.'),
  step('На консоли сервера проверь SSH unit',['^systemctl\\s+status\\s+ssh'], '● ssh.service - OpenBSD Secure Shell server\n   Active: inactive (dead)', 'Вероятная причина найдена.', 'systemctl status ssh'),
  step('Проверь конфигурацию до запуска',['^(sudo\\s+)?sshd\\s+-t'], '(no output, exit 0)', 'Конфигурация синтаксически корректна.', 'sudo sshd -t'),
  step('Запусти SSH',['^sudo\\s+systemctl\\s+start\\s+ssh'], '● ssh.service - Active: active (running)\nServer listening on 0.0.0.0 port 22.', 'Доступ восстановлен, проверь автозапуск и причину остановки.', 'sudo systemctl start ssh')
@@ -332,7 +333,7 @@ S('tls-expired','TLS-сертификат истёк',3,'TLS / Nginx','Сайт 
 ], 'Не устраняй проблему через curl -k. Восстанови автоматизацию обновления и проверь текущий сертификат.', 'lock'),
 S('db-port','Приложение не видит PostgreSQL',3,'TCP / База данных','В логах connect timeout к 10.20.30.15:5432.', ['Connection timed out to database','Сам сервер DB работает'], 'ACL блокирует путь TCP/5432 между подсетями', [
  step('Проверь маршрут до базы',['^ip\\s+route\\s+get\\s+10\\.20\\.30\\.15'], '10.20.30.15 via 10.20.10.1 dev ens3 src 10.20.10.25', 'Есть маршрут к next-hop.', 'ip route get 10.20.30.15'),
- step('Проверь TCP-порт',['^nc\\s+-vz\\s+10\\.20\\.30\\.15\\s+5432'], 'nc: connect to 10.20.30.15 port 5432 (tcp) timed out', 'Timeout — не то же самое, что refused.', 'nc -vz 10.20.30.15 5432'),
+ commandStep('Проверь TCP-порт', 'nc -vz 10.20.30.15 5432', 'nc: connect to 10.20.30.15 port 5432 (tcp) timed out', 'Timeout — не то же самое, что refused.'),
  step('Посмотри серверный слушатель (через консоль DB)',['^(sudo\\s+)?ss\\s+.*l.*t.*p'], 'LISTEN 0 244 0.0.0.0:5432 users:(("postgres",pid=1682))', 'На DB есть слушатель; проверяем фильтрацию между узлами.', 'sudo ss -lntp'),
  step('Посмотри правила firewall на DB',['^(sudo\\s+)?(ufw\\s+status|nft\\s+list\\s+ruleset)'], 'ALLOW TCP/5432 from 10.20.40.0/24\nDENY  TCP/5432 from others', 'Подсеть приложения 10.20.10.0/24 отсутствует в ACL.', 'sudo ufw status verbose')
 ], 'Изменение firewall должно проходить через согласование. Порт и IP-источник фиксируй в заявке.', 'network'),

@@ -53,6 +53,31 @@ test('a hidden solution still counts as seen and Enter advances from the result'
   await expect(input).toBeFocused();
 });
 
+test('the TCP exercise explains mobile punctuation and accepts the reordered flags', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const backup = newProgress();
+  backup.drills['network-05'] = { seen: 1, correct: 0, fails: 1, streak: 0, interval: 0, due: 0, last: 1 };
+  await page.addInitScript(({ key, progress }) => localStorage.setItem(key, JSON.stringify(progress)), {
+    key: PROGRESS_KEY,
+    progress: backup,
+  });
+  await page.goto('./#/review');
+  await page.getByRole('button', { name: 'Начать повторение' }).click();
+  const input = page.getByRole('textbox', { name: 'Команда Linux' });
+
+  await input.fill('nc −zv 10.10.20.15 5432');
+  await input.press('Enter');
+  await expect(page.locator('.feedback.bad')).toContainText('обычный дефис');
+
+  await input.fill('nc -zv 10.10.20.15 5433');
+  await input.press('Enter');
+  await expect(page.locator('.feedback.bad')).toContainText('номер порта');
+
+  await input.fill('nc -zv 10.10.20.15 5432');
+  await input.press('Enter');
+  await expect(page.locator('.feedback.good')).toContainText('Верно');
+});
+
 test('invalid imports preserve data and valid old backups restore it', async ({ page }) => {
   await page.goto('./#/settings');
   const file = page.locator('#import-file');
